@@ -3,8 +3,11 @@
 
 #include "predef.hpp"
 #include <vector>
+#include <boost/enable_shared_from_this.hpp>
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/bind.hpp>
+#include "Config.hpp"
 #include "Authenticater.hpp"
 
 namespace asio = boost::asio;
@@ -13,20 +16,10 @@ using asio::ip::tcp;
 namespace csocks
 {
 
-class Channel
+class Channel:
+    public boost::enable_shared_from_this<Channel>
 {
 private:
-    enum PROGRESS {
-        PROGRESS_INIT,  // 初始化
-
-        PROGRESS_GREET_WAITING,
-        PROGRESS_GREET_SENT,
-
-        PROGRESS_AUTH_WAITING,  // 等候认证包
-        PROGRESS_AUTH_CONTINUE, // 认证接收不完整
-        PROGRESS_AUTHING,       // 认证中（认证包接收完毕，等待认证）
-        PROGRESS_AUTHED,        // 认证完毕
-    };
     enum CMD {
         CMD_CONNECT = 1,
         CMD_BIND = 2,
@@ -43,103 +36,110 @@ private:
         STAGE_DESTROYED = -1,
     };
 
-    tcp::socket downstream;
-    tcp::socket upstream;
+    static const Config* const config;
+
+    asio::io_service& ioService;
+    tcp::socket ds;
+    tcp::socket us;
     Buffer bufdr, bufdw, bufur, bufuw;
 
     Authenticater authenticater;
     Authority authority;
 
-    PROGRESS progress;
     STAGE stage;
 
 public:
-    Channel(asio::io_service& ioService):
-        downstream(ioService), upstream(ioService),
-        progress(PROGRESS_INIT), stage(STAGE_INIT)
-    {}
-
-    tcp::socket& socket()
+    Channel(asio::io_service& _ioService):
+        ioService(_ioService),
+        ds(ioService), us(ioService),
+        stage(STAGE_INIT)
     {
-        return downstream;
+        setsockopt(ds.native(), SOL_SOCKET, SO_RCVTIMEO, &config->ds_recv_timeout, sizeof(config->ds_recv_timeout));
+        setsockopt(ds.native(), SOL_SOCKET, SO_RCVTIMEO, &config->ds_recv_timeout, sizeof(config->ds_recv_timeout));
+        setsockopt(us.native(), SOL_SOCKET, SO_RCVTIMEO, &config->us_recv_timeout, sizeof(config->us_recv_timeout));
+        setsockopt(us.native(), SOL_SOCKET, SO_RCVTIMEO, &config->us_recv_timeout, sizeof(config->us_recv_timeout));
+        asio::ssl::context c(asio::ssl::context::sslv23);
+        asio::ssl::context_base::options  o;
+
+        c.set_options();
+    }
+
+    tcp::socket& downstream()
+    {
+        return ds;
     }
 
     void start()
     {
-        readdr();
+        readDs(2);
     }
 
-    void readdr()
+private:
+
+    // read
+    //  +----+----------+----------+
+    //  |VER | NMETHODS | METHODS  |
+    //  +----+----------+----------+
+    //  | 1  |    1     | 1 to 255 |
+    //  +----+----------+----------+
+    //  [               ]
+    // or
+    //  +----+----+----+----+----+----+----+----+----+----+....+----+
+    //  | VN | CD | DSTPORT |      DSTIP        | USERID       |NULL|
+    //  +----+----+----+----+----+----+----+----+----+----+....+----+
+    //    1    1      2        4                  variable       1
+    //  [         ]
+    // 读取[]里的部分.
+    void readDs(std::size_t exact_bytes)
     {
-        downstream.async_read_some(asio::buffer(bufdr.data + bufdr.filled, bufdr.size - bufdr.filled),
-            boost::bind(&Channel::handle_readdr, this, asio::placeholders::error,
+        asio::async_read(ds, asio::buffer(bufdr.data + bufdr.filled, bufdr.size - bufdr.filled),
+            asio::transfer_at_least(exact_bytes),
+            boost::bind(&Channel::handleReadDs, shared_from_this(), asio::placeholders::error,
                 asio::placeholders::bytes_transferred));
     }
 
-    void handle_readdr(const boost::system::error_code& err, std::size_t bytes_read)
+    void readDs()
+    {
+        ds.async_read_some(asio::buffer(bufdr.data + bufdr.filled, bufdr.size - bufdr.filled),
+            boost::bind(&Channel::handleReadDs, shared_from_this(), asio::placeholders::error,
+                asio::placeholders::bytes_transferred));
+    }
+
+    void handleReadDs(const boost::system::error_code &err, std::size_t bytes_read)
     {
         if (CS_BUNLIKELY(err))
         {
             delete this;
         }
 
-        if (CS_BLIKELY(progress == PROGRESS_AUTHED))
-        {
-            _handle_dr(bytes_read);
-        }
-        else
-        {
-            switch (progress)
-            {
-                case PROGRESS_INIT:
-                    progress = PROGRESS_GREET_WAITING;
-
-                case PROGRESS_GREET_WAITING:
-                    _handle_greet();
-                    break;
-                case PROGRESS_GREET_SENT:
-                    progress = PROGRESS_AUTH_WAITING;
-
-                case PROGRESS_AUTH_CONTINUE:
-                    switch (authenticater.auth(bufdr))
-                    {
-                        case Authenticater::STATUS_HUNGRY:
-                            readdr();
-                            break;
-                        case Authenticater::STATUS_WAITING:
-                            bufdr.filled = 0;
-                            authenticater.packAuth(bufdw);
-                            downstream.async_send(asio::buffer(bufdw.data, bufdw.filled),
-                                boost::bind(&Channel::readdr, this));
-                            break;
-                    }
-                    break;
-                case PROGRESS_AUTHING:
-                    // TODO:
-                    break;
-
-                default:
-                    delete this;
-                    break;
-            }
-        }
     }
 
     ~Channel()
     {
+        boost::system::error_code ignored_err;
+        if (ds.is_open())
+        {
+            ds.shutdown(tcp::socket::shutdown_both, ignored_err);
+            ds.close(ignored_err);
+        }
+        if (us.is_open())
+        {
+            us.shutdown(tcp::socket::shutdown_both, ignored_err);
+            us.close(ignored_err);
+        }
         authenticater.restore(authority);
     }
 
 private:
-    void _handle_greet()
+    void _handleGreet()
     {
         bufdr.filled = 0;
         bufdw.data[0] = 0x5;
-        downstream.async_send(asio::buffer(bufdw.data, 1),
-            boost::bind(&Channel::readdr, this));
+        ds.async_send(asio::buffer(bufdw.data, 1),
+            boost::bind(&Channel::readDs, shared_from_this()));
     }
 
-    void _handle_dr(std::size_t bytes_read)
+    void _handleDr(std::size_t bytes_read)
     {
         if (CS_BLIKELY(authority.traf(bytes_read)))
         {

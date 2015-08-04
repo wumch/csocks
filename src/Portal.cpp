@@ -12,7 +12,7 @@ namespace csocks
 void Portal::accept()
 {
     Channel* chan = new Channel(ioService);
-    acceptor.async_accept(chan->socket(),
+    acceptor.async_accept(chan->downstream(),
         boost::bind(&Portal::handle_accept, this, chan, boost::asio::placeholders::error));
     try
     {
