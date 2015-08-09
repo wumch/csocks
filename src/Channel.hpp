@@ -88,6 +88,12 @@ public:
         readNumMethods();
     }
 
+
+    ~Channel()
+    {
+    	shutdown();
+    }
+
 private:
     void readNumMethods()
     {
@@ -417,39 +423,6 @@ private:
 //		asio::async_write()
     }
 
-
-    ~Channel()
-    {
-    	shutdown();
-    }
-
-private:
-    void _handleDr(std::size_t bytes_read)
-    {
-        if (CS_BLIKELY(authority.traf(bytes_read)))
-        {
-            switch (bufdr.data[0])
-            {
-                case CMD_CONNECT:
-                    CS_SAY("cmd:connect");
-                    break;
-                case CMD_BIND:
-                    CS_SAY("cmd:bind");
-                    break;
-                case CMD_UDP_ASSOCIATE:
-                    CS_SAY("cmd:udp_assoc");
-                    break;
-                default:    // 无效命令
-                    delete this;
-                    break;
-            }
-        }
-        else
-        {
-            delete this;
-        }
-    }
-
     void shutdown(const boost::system::error_code& err, std::size_t bytesSent)
     {
     	shutdown();
@@ -473,3 +446,5 @@ private:
 };
 
 }
+
+#undef KICK_IF
