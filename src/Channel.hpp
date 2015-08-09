@@ -7,6 +7,9 @@
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/bind.hpp>
+#include <crypto++/modes.h>
+#include <crypto++/aes.h>
+#include <crypto++/filters.h>
 #include "Config.hpp"
 #include "Authenticater.hpp"
 
@@ -39,33 +42,31 @@ private:
     static const Config* const config;
 
     asio::io_service& ioService;
-    tcp::socket ds;
-    tcp::socket us;
+    tcp::socket ds, us;
     Buffer bufdr, bufdw, bufur, bufuw;
 
-    Authenticater authenticater;
+    Authenticater& authenticater;
     Authority authority;
 
     STAGE stage;
 
 public:
-    Channel(asio::io_service& _ioService):
+    Channel(asio::io_service& _ioService, Authenticater& _authenticater):
         ioService(_ioService),
         ds(ioService), us(ioService),
+        authenticater(_authenticater),
         stage(STAGE_INIT)
     {
         setsockopt(ds.native(), SOL_SOCKET, SO_RCVTIMEO, &config->ds_recv_timeout, sizeof(config->ds_recv_timeout));
         setsockopt(ds.native(), SOL_SOCKET, SO_RCVTIMEO, &config->ds_recv_timeout, sizeof(config->ds_recv_timeout));
         setsockopt(us.native(), SOL_SOCKET, SO_RCVTIMEO, &config->us_recv_timeout, sizeof(config->us_recv_timeout));
         setsockopt(us.native(), SOL_SOCKET, SO_RCVTIMEO, &config->us_recv_timeout, sizeof(config->us_recv_timeout));
-        asio::ssl::context c(asio::ssl::context::sslv23);
-        asio::ssl::context_base::options  o;
-
-        c.set_options();
     }
 
     tcp::socket& downstream()
     {
+        CryptoPP::AES::Encryption aesEnc();
+        CryptoPP::StreamTransformationFilter streamEncor();
         return ds;
     }
 
