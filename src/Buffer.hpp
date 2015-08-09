@@ -11,27 +11,27 @@ class Buffer
 {
 public:
     char* data;
-    std::size_t size;
+    std::size_t capacity;
     std::size_t filled;
 
     Buffer():
-        data(NULL), size(0), filled(0)
+        data(NULL), capacity(0), filled(0)
     {}
 
     Buffer(std::size_t _size):
-        data(NULL), size(_size), filled(0)
+        data(NULL), capacity(_size), filled(0)
     {
-        setSize(size);
+        setCapacity(capacity);
     }
 
-    void setSize(std::size_t _size)
+    void setCapacity(std::size_t _capacity)
     {
         if (data != NULL)
         {
             throw std::bad_alloc();
         }
-        size = _size;
-        data = new char[size];
+        capacity = _capacity;
+        data = new char[capacity];
     }
 
     ~Buffer()

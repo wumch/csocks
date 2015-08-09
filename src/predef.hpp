@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include "meta.hpp"
+#include "stage/meta.hpp"
 #include <vector>
 
 namespace csocks
