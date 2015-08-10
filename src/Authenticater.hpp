@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "predef.hpp"
@@ -12,7 +13,7 @@ class Authenticater
 {
 public:
     enum AuthCode {
-    	CODE_OK,		// 成功
+    CODE_OK,// 成功
         CODE_EXPIRED, // 会员过期
         CODE_TRAFFIC_EXHAUST, // 阶段流量耗尽
     };
@@ -25,10 +26,10 @@ public:
     template<typename Callback>
     void auth(const char* username, const char* password, Callback callback)
     {
-    	// send auth request
-    	Authority authority;
-    	AuthCode code = CODE_OK;
-    	callback(code, authority);
+        // send auth request
+        Authority authority;
+        AuthCode code = CODE_OK;
+        callback(code, authority);
     }
 };
 

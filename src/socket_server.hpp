@@ -730,7 +730,7 @@ protected:
                 //  [                                               ]
 
                 char *p = m_local_buffer.data();
-                int len = 4;
+                int len = 4;。。
                 write_int8(SOCKS_VERSION_5, p);
                 write_int8(SOCKS5_SUCCEEDED, p);
                 write_int8(0x00, p);
