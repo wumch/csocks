@@ -24,7 +24,9 @@ public:
     }
 
     template<typename Callback>
-    void auth(const char* username, const char* password, Callback callback)
+    void auth(const char* username, std::size_t usernameLen,
+        const char* password, std::size_t passwordLen,
+        Callback callback)
     {
         // send auth request
         Authority authority;
