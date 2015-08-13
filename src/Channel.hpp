@@ -11,9 +11,6 @@
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/bind.hpp>
-#include <crypto++/modes.h>
-#include <crypto++/aes.h>
-#include <crypto++/filters.h>
 #include "Config.hpp"
 #include "Crypto.hpp"
 #include "Authenticater.hpp"
@@ -112,8 +109,6 @@ public:
 
     tcp::socket& downstream()
     {
-        CryptoPP::AES::Encryption aesEnc();
-        CryptoPP::StreamTransformationFilter streamEncor();
         return ds;
     }
 
