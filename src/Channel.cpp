@@ -4,4 +4,6 @@
 namespace csocks
 {
 
+const Config* const Channel::config = NULL;
+
 }

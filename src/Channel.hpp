@@ -6,19 +6,20 @@
 #include <cstring>      // for memcpy
 #include <vector>
 #include <string>
+#include <boost/noncopyable.hpp>
 #include <boost/enable_shared_from_this.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/bind.hpp>
+#include "Authenticater.hpp"
 #include "Config.hpp"
 #include "Crypto.hpp"
-#include "Authenticater.hpp"
+#include "Outlet.hpp"
 
 namespace asio = boost::asio;
 using asio::ip::tcp;
 using asio::ip::udp;
-
 
 #define SINGLE_BYTE __attribute__((aligned(1), packed))
 
@@ -32,30 +33,35 @@ class Channel:
 {
 private:
     enum {
-        CMD_CONNECT = 0x01,
-        CMD_BIND = 0x02,
-        CMD_UDP_ASSOC = 0x03,
+        CMD_CONNECT     = 0x01,
+        CMD_BIND        = 0x02,
+        CMD_UDP_ASSOC   = 0x03,
     } SINGLE_BYTE;
+
     // 认证方法
     enum {
-        AUTH_NONE = 0x00,            // 不认证
-        AUTH_USERPASS = 0x02,        // 用户名+密码
-        AUTH_UNACCEPTABLE = 0xff,    // 无可接受方法
+        AUTH_NONE           = 0x00,        // 不认证
+        AUTH_USERPASS       = 0x02,        // 用户名+密码
+        AUTH_UNACCEPTABLE   = 0xff,        // 无可接受方法
     } SINGLE_BYTE;
+
     // 认证结果
     enum {
-        AUTH_RES_SUCCESS = 0x00,        // 成功
-        AUTH_RES_FAILED = 0x01,            // 失败
+        AUTH_RES_SUCCESS    = 0x00,        // 成功
+        AUTH_RES_FAILED     = 0x01,        // 失败
     } SINGLE_BYTE;
+
     // addr type
     enum AddrType {
         ADDR_IPV4 = 0x01,
         ADDR_DOMAIN = 0x03,
         ADDR_IPV6 = 0x04,
     } SINGLE_BYTE;
+
     enum {
         CONNECT_SUCCEED = 0x00,     // 连接成功
     } SINGLE_BYTE;
+
     enum {
         SOCKS5_CONNECT_SUCCEED                          = 0x00,
         SOCKS5_GENERAL_SOCKS_SERVER_FAILURE             = 0x01,
@@ -65,11 +71,11 @@ private:
         SOCKS5_CONNECTION_REFUSED                       = 0x05,
         SOCKS5_TTL_EXPIRED                              = 0x06,
         SOCKS5_COMMAND_NOT_SUPPORTED                    = 0x07,
-        SOCKS5_ADDRESS_TYPE_NOT_SUPPORTED               = 0x08,
-
+        SOCKS5_ADDRESS_TYPE_UNSUPPORTED                 = 0x08,
         // defined by csocks:
         SOCKS5_DOMAIN_RESOLVE_FAILED                    = 0x10,
     } SINGLE_BYTE;
+
     enum {
         SOCKS4_CONNECT_SUCCEED = 0x00,
         SOCKS4_REQUEST_GRANTED = 90,
@@ -83,6 +89,8 @@ private:
 
     static const Config* const config;
 
+    UserOutletMap& users;
+
     asio::io_service& ioService;
     tcp::resolver resolver;
 
@@ -93,18 +101,20 @@ private:
 
     Crypto crypto;
     Authenticater& authenticater;
-    Authority authority;
+    Authority* authority;
 
 public:
-    Channel(asio::io_service& _ioService, Authenticater& _authenticater):
+    Channel(UserOutletMap& _users, asio::io_service& _ioService, Authenticater& _authenticater):
+        users(_users),
         ioService(_ioService), resolver(ioService),
-        ds(ioService), us(ioService), dsVersion(0),
-        authenticater(_authenticater)
+        ds(ioService), us(ioService), dsu(ioService),
+        dsVersion(0),
+        authenticater(_authenticater), authority(NULL)
     {
-        setsockopt(ds.native(), SOL_SOCKET, SO_RCVTIMEO, &config->ds_recv_timeout, sizeof(config->ds_recv_timeout));
-        setsockopt(ds.native(), SOL_SOCKET, SO_SNDTIMEO, &config->ds_send_timeout, sizeof(config->ds_send_timeout));
-        setsockopt(us.native(), SOL_SOCKET, SO_RCVTIMEO, &config->us_recv_timeout, sizeof(config->us_recv_timeout));
-        setsockopt(us.native(), SOL_SOCKET, SO_SNDTIMEO, &config->us_send_timeout, sizeof(config->us_send_timeout));
+        setsockopt(ds.native(), SOL_SOCKET, SO_RCVTIMEO, &config->dsRecvTimeout, sizeof(config->dsRecvTimeout));
+        setsockopt(ds.native(), SOL_SOCKET, SO_SNDTIMEO, &config->dsSendTimeout, sizeof(config->dsSendTimeout));
+        setsockopt(us.native(), SOL_SOCKET, SO_RCVTIMEO, &config->usRecvTimeout, sizeof(config->usRecvTimeout));
+        setsockopt(us.native(), SOL_SOCKET, SO_SNDTIMEO, &config->usSendTimeout, sizeof(config->usSendTimeout));
     }
 
     tcp::socket& downstream()
@@ -133,7 +143,6 @@ private:
         //  | 1  |    1     | 1 to 255 |
         //  +----+----------+----------+
         //  [               ]
-        // 读取[]里的部分.
         asio::async_read(ds, asio::buffer(bufdr.data, bufdr.capacity),
             asio::transfer_exactly(2),
             boost::bind(&Channel::handleGreet, shared_from_this(), asio::placeholders::error,
@@ -171,12 +180,21 @@ private:
         char methods[maxNumMethods];
         crypto.decrypt(bufdr.data, numMethods, methods);
 
-        char method = AUTH_UNACCEPTABLE;
-        for (int i = 0; i < numMethods; ++i)
+        uint8_t method;
+        if (CS_BLIKELY(methods[0] == AUTH_USERPASS || (numMethods > 1 && methods[1] == AUTH_USERPASS)))
         {
-            if (methods[i] == AUTH_USERPASS)
+            method = AUTH_USERPASS;
+        }
+        else
+        {
+            method = AUTH_UNACCEPTABLE;
+            for (int i = 0; i < numMethods; ++i)
             {
-                method = methods[i];
+                if (methods[i] == AUTH_USERPASS)
+                {
+                    method = methods[i];
+                    break;
+                }
             }
         }
 
@@ -187,7 +205,7 @@ private:
         //  | 1  |   1    |
         //  +----+--------+
         //  [             ]
-        char data[2] = {PROTOCOL_VERSION, method};
+        uint8_t data[2] = {PROTOCOL_VERSION, method};
         crypto.encrypt(data, 2, bufdw.data);
 
         if (CS_BUNLIKELY(method == AUTH_UNACCEPTABLE))
@@ -246,7 +264,7 @@ private:
 
         char* userPassLen = bufdw.data;         // now bufdw is idle, reuse it.
         crypto.decrypt(bufdr.data, bytesRead, userPassLen);
-        int passLen = userPassLen[bytesRead - 1];
+        uint8_t passLen = userPassLen[bytesRead - 1];
         KICK_IF(passLen < 1)
         userPassLen[bytesRead - 1] = 0x00;
 
@@ -258,7 +276,7 @@ private:
         //  +----+------+----------+------+----------+
         //                                [          ]
         asio::async_read(ds, asio::buffer(bufdr.data, bufdr.capacity), asio::transfer_exactly(passLen),
-            boost::bind(&Channel::handleUserPassLen, shared_from_this(), userPassLen, bytesRead - 1,
+            boost::bind(&Channel::handleUserPass, shared_from_this(), userPassLen, bytesRead - 1,
                 asio::placeholders::error, asio::placeholders::bytes_transferred));
     }
 
@@ -273,18 +291,20 @@ private:
         CS_DUMP(username);
         CS_DUMP(password);
 
-        authenticater.auth(username, usernameLen, password, bytesRead,
-            boost::bind(&Channel::handleAuthed, username, usernameLen, _1, _2));
+//        authenticater.auth(username, usernameLen, password, bytesRead,
+//            boost::bind(&Channel::handleAuthed, shared_from_this(), username, usernameLen));
+        authenticater.auth(username, usernameLen, password, bytesRead);
     }
 
     void handleAuthed(const char* username, std::size_t usernameLen,
-            Authenticater::AuthCode code, const Authority& _authority)
+            int code, Authority* _authority)
     {
         if (CS_BLIKELY(code == Authenticater::CODE_OK))
         {
+            addToOutlet(std::string(username, usernameLen));
             authority = _authority;
-            crypto.setDecKeyWithIv(authority.key, sizeof(authority.key),
-                    authority.iv, sizeof(authority.iv));
+            crypto.setDecKeyWithIv(authority->key, sizeof(authority->key),
+                    authority->iv, sizeof(authority->iv));
 
             // 认证成功
             // write
@@ -294,9 +314,9 @@ private:
             //  | 1  |    1   | 16  | 16 |
             //  +----+--------+-----+----+
             //  [                        ]
-            char data[2 + sizeof(authority.key) + sizeof(authority.iv)] = {PROTOCOL_VERSION, AUTH_RES_SUCCESS};
-            std::memcpy(data + 2, authority.key, sizeof(authority.key));
-            std::memcpy(data + (2 + sizeof(authority.key)), authority.iv, sizeof(authority.iv));
+            char data[2 + sizeof(authority->key) + sizeof(authority->iv)] = {PROTOCOL_VERSION, AUTH_RES_SUCCESS};
+            std::memcpy(data + 2, authority->key, sizeof(authority->key));
+            std::memcpy(data + (2 + sizeof(authority->key)), authority->iv, sizeof(authority->iv));
             crypto.encrypt(data, sizeof(data), bufdw.data);
 
             asio::async_write(ds, asio::buffer(bufdw.data, bufdw.capacity), asio::transfer_exactly(sizeof(data)),
@@ -396,7 +416,7 @@ private:
     {
         KICK_IF(err)
 
-        char ipPort[8] __attribute((aligned(4)));        // to align with 4 bytes.
+        char ipPort[8] __attribute((aligned(4)));        // to align with 4 bytes with non-GNUC.
         crypto.decrypt(bufdr.data, 5, ipPort + 1);
         ipPort[0] = firstByte;
         uint32_t ip = ntohl(*reinterpret_cast<uint32_t*>(ipPort));
@@ -404,7 +424,7 @@ private:
         KICK_IF(ip == 0 || port == 0);
 
         tcp::endpoint endpoint(asio::ip::address_v4(ip), port);
-        asio::async_connect(us, endpoint,
+        us.async_connect(endpoint,
             boost::bind(&Channel::handleConnectIp, shared_from_this(),
                 ADDR_IPV4, endpoint, asio::placeholders::error));
     }
@@ -431,7 +451,7 @@ private:
         if (CS_BLIKELY(!err))
         {
             asio::async_connect(us, it++, boost::bind(&Channel::handleConnectDomain, shared_from_this(),
-                it->endpoint().port(), asio::placeholders::error, it));
+                domain, it->endpoint().port(), asio::placeholders::error, it));
         }
         else
         {
@@ -441,13 +461,13 @@ private:
     }
 
     void handleConnectIp(AddrType addrType, const tcp::endpoint& endpoint,
-        const boost::system::error_code &err)
+        const boost::system::error_code& err)
     {
         if (CS_BLIKELY(!err))
         {
             boost::system::error_code ec;
             tcp::endpoint usend = us.remote_endpoint(ec);
-            if (CS_BUNLIKELY(ec))
+            if (CS_UNLIKELY(ec))
             {
                 shutdown();
                 return;
@@ -490,34 +510,6 @@ private:
         }
     }
 
-    uint8_t getSocksConnectErrcode(int asioErrcode) __attribute__((const))
-    {
-        if (CS_BLIKELY(dsVersion == PROTOCOL_V5))
-        {
-            switch (asioErrcode)
-            {
-            case asio::error::connection_refused:
-            case asio::error::connection_aborted:
-            case asio::error::connection_reset:
-                return SOCKS5_CONNECTION_REFUSED;
-
-            case asio::error::host_unreachable:
-                return SOCKS5_HOST_UNREACHABLE;
-
-            case asio::error::network_unreachable:
-            case asio::error::network_reset:
-            case asio::error::network_reset:
-                return SOCKS5_NETWORK_UNREACHABLE;
-            }
-
-            return SOCKS5_GENERAL_SOCKS_SERVER_FAILURE;
-        }
-        else
-        {
-            return SOCKS4_CONNECT_FAILED;
-        }
-    }
-
     void handleConnectDomain(const std::string& domain, uint16_t port,
         const boost::system::error_code &err, tcp::resolver::iterator it)
     {
@@ -551,8 +543,9 @@ private:
             tcp::resolver::iterator end;
             if (it != end)
             {
-                asio::async_connect(us, it++, boost::bind(&Channel::handleConnectDomain,
-                    shared_from_this(), asio::placeholders::error, it, domain, port));
+                asio::async_connect(us, it++,
+                    boost::bind(&Channel::handleConnectDomain, shared_from_this(),
+                        domain, port, asio::placeholders::error, it));
                 return;
             }
             else
@@ -562,26 +555,130 @@ private:
         }
     }
 
-    void handleConnectedResponseSent(const boost::system::error_code &err, std::size_t bytesSent)
+    void handleConnectedResponseSent(const boost::system::error_code& err, std::size_t bytesSent)
     {
         KICK_IF(err)
 
         bufdr.filled = 0;
         ds.async_read_some(asio::buffer(bufdr.data, bufdr.capacity),
-            boost::bind(&Channel::handleReadBody, shared_from_this(),
+            boost::bind(&Channel::handleDsRead, shared_from_this(),
+                asio::placeholders::error, asio::placeholders::bytes_transferred));
+
+        bufur.filled = 0;
+        us.async_read_some(asio::buffer(bufur.data, bufur.capacity),
+            boost::bind(&Channel::handleUsRead, shared_from_this(),
                 asio::placeholders::error, asio::placeholders::bytes_transferred));
     }
 
-    void handleReadBody(const boost::system::error_code &err, std::size_t bytesRead)
+    void handleDsRead(const boost::system::error_code& err, std::size_t bytesRead)
     {
         KICK_IF(err)
 
-        bufdr.filled += bytesRead;
-        crypto.decrypt(bufdr, bufuw);
+        crypto.decrypt(bufdr.data, bytesRead, bufuw.data);
+        asio::async_write(us, asio::buffer(bufuw.data, bytesRead),
+            asio::transfer_exactly(bytesRead),
+            boost::bind(&Channel::handleDrSent, shared_from_this(),
+                asio::placeholders::error, asio::placeholders::bytes_transferred));
+    }
 
-        // ds.read() => us.write()
-        // NOTE: 考虑 https 的情况：连接建立后，服务器端可能先发送数据。
-//        asio::async_write()
+    void handleUsRead(const boost::system::error_code& err, std::size_t bytesRead)
+    {
+        KICK_IF(err)
+
+        crypto.decrypt(bufur.data, bytesRead, bufdw.data);
+        asio::async_write(ds, asio::buffer(bufdw.data, bytesRead),
+            asio::transfer_exactly(bytesRead),
+            boost::bind(&Channel::handleUrSent, shared_from_this(),
+                asio::placeholders::error, asio::placeholders::bytes_transferred));
+    }
+
+    void handleDrSent(const boost::system::error_code& err, std::size_t bytesRead)
+    {
+        KICK_IF(err)
+
+        ds.async_read_some(asio::buffer(bufdr.data, bufdr.capacity),
+            boost::bind(&Channel::handleDsRead, shared_from_this(),
+                asio::placeholders::error, asio::placeholders::bytes_transferred));
+    }
+
+    void handleUrSent(const boost::system::error_code& err, std::size_t bytesRead)
+    {
+        KICK_IF(err)
+
+        us.async_read_some(asio::buffer(bufur.data, bufur.capacity),
+            boost::bind(&Channel::handleUsRead, shared_from_this(),
+                asio::placeholders::error, asio::placeholders::bytes_transferred));
+    }
+
+private:
+    uint8_t getSocksConnectErrcode(int asioErrcode) __attribute__((const))
+    {
+        if (CS_BLIKELY(dsVersion == PROTOCOL_V5))
+        {
+            switch (asioErrcode)
+            {
+            case asio::error::connection_refused:
+            case asio::error::connection_aborted:
+            case asio::error::connection_reset:
+                return SOCKS5_CONNECTION_REFUSED;
+
+            case asio::error::host_unreachable:
+                return SOCKS5_HOST_UNREACHABLE;
+
+            case asio::error::network_unreachable:
+            case asio::error::network_reset:
+            case asio::error::network_down:
+                return SOCKS5_NETWORK_UNREACHABLE;
+            }
+
+            return SOCKS5_GENERAL_SOCKS_SERVER_FAILURE;
+        }
+        else
+        {
+            return SOCKS4_CONNECT_FAILED;
+        }
+    }
+
+    void dealConnectFailed(const boost::system::error_code &err)
+    {
+        dealConnectFailed(getSocksConnectErrcode(err.value()));
+    }
+
+    void dealConnectFailed(const uint8_t socksErrcode)
+    {
+        if (CS_BLIKELY(dsVersion == PROTOCOL_V5))
+        {
+            // socks5 连接失败
+            //  +----+-----+-------+------+----------+----------+
+            //  |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+            //  +----+-----+-------+------+----------+----------+
+            //  | 1  |  1  | X'00' |  1   | Variable |    2     |
+            //  +----+-----+-------+------+----------+----------+
+            //  [                                               ]
+            // just always reply with addr-type = addr-type-ipv4.
+            uint8_t data[10] = { PROTOCOL_V5, socksErrcode, 0x00, ADDR_IPV4 };
+            crypto.encrypt(data, sizeof(data), bufdw.data);
+
+            asio::async_write(ds, asio::buffer(bufdw.data, sizeof(data)), asio::transfer_exactly(sizeof(data)),
+                boost::bind(&Channel::shutdown, shared_from_this(),
+                    asio::placeholders::error, asio::placeholders::bytes_transferred));
+        }
+        else // if (dsVersion == PROTOCOL_V4)
+        {
+            // socks4 连接失败
+            //  +----+----+----+----+----+----+----+----+
+            //  | VN | CD | DSTPORT |      DSTIP        |
+            //  +----+----+----+----+----+----+----+----+
+            //  | 1  | 1  |    2    |         4         |
+            //  +----+----+----+----+----+----+----+----+
+            //  [                                       ]
+            uint8_t data[8] = { PROTOCOL_V4, socksErrcode };
+            crypto.encrypt(data, sizeof(data), bufdw.data);
+
+            asio::async_write(ds, asio::buffer(bufdw.data, sizeof(data)), asio::transfer_exactly(sizeof(data)),
+                boost::bind(&Channel::shutdown, shared_from_this(),
+                    asio::placeholders::error, asio::placeholders::bytes_transferred));
+        }
     }
 
     void shutdown(const boost::system::error_code& err, std::size_t bytesSent)
@@ -606,50 +703,24 @@ private:
         {
             dsu.close();
         }
-        authenticater.restore(authority);
+        authenticater.restore(*authority);
     }
 
-private:
-    void dealConnectFailed(const boost::system::error_code &err)
+    void addToOutlet(const std::string& username)
     {
-        dealConnectFailed(getSocksConnectErrcode(err.value()));
-    }
-
-    void dealConnectFailed(const uint8_t socksErrcode)
-    {
-        if (CS_BLIKELY(dsVersion == PROTOCOL_V5))
+        // TODO: lock
+        UserOutletMap::iterator it = users.find(username);
+        if (it == users.end())
         {
-            // socks5 连接失败
-            //  +----+-----+-------+------+----------+----------+
-            //  |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-            //  +----+-----+-------+------+----------+----------+
-            //  | 1  |  1  | X'00' |  1   | Variable |    2     |
-            //  +----+-----+-------+------+----------+----------+
-            //  [                                               ]
-            // just always reply with addr-type = addr-type-ipv4.
-            char data[10] = { PROTOCOL_V5, socksErrcode, 0x00, ADDR_IPV4 };
-            crypto.encrypt(data, sizeof(data), bufdw.data);
-
-            asio::async_write(ds, asio::buffer(bufdw.data, sizeof(data)), asio::transfer_exactly(sizeof(data)),
-                boost::bind(&Channel::shutdown, shared_from_this(),
-                    asio::placeholders::error, asio::placeholders::bytes_transferred));
+//            Outlet outlet(authority);
+//            users[username] = outlet;
+//            outlet.channels.push_back(this);
         }
-        else // if (dsVersion == PROTOCOL_V4)
+        else
         {
-            // socks4 连接失败
-            //  +----+----+----+----+----+----+----+----+
-            //  | VN | CD | DSTPORT |      DSTIP        |
-            //  +----+----+----+----+----+----+----+----+
-            //  | 1  | 1  |    2    |         4         |
-            //  +----+----+----+----+----+----+----+----+
-            //  [                                       ]
-            char data[8] = { PROTOCOL_V4, socksErrcode };
-            crypto.encrypt(data, sizeof(data), bufdw.data);
-
-            asio::async_write(ds, asio::buffer(bufdw.data, sizeof(data)), asio::transfer_exactly(sizeof(data)),
-                boost::bind(&Channel::shutdown, shared_from_this(),
-                    asio::placeholders::error, asio::placeholders::bytes_transferred));
+//            it->second.channels.push_back(this);
         }
+        // TODO: unlock
     }
 
 };

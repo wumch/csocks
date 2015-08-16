@@ -33,8 +33,8 @@ public:
     boost::asio::ip::address host;
     std::uint16_t port;
 
-    std::time_t ds_recv_timeout, ds_send_timeout,
-        us_recv_timeout, us_send_timeout;
+    std::time_t dsRecvTimeout, dsSendTimeout,
+        usRecvTimeout, usSendTimeout;
 };
 
 }

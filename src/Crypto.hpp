@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include <cstring>
 #include <boost/static_assert.hpp>
 #include <crypto++/modes.h>
 #include <crypto++/aes.h>
@@ -18,51 +19,48 @@ private:
     CryptoPP::CFB_Mode<CryptoPP::AES>::Decryption decor;
 
 public:
+#if CS_DEBUG        // avoid from destructing encor/decor with empty key/iv.
     Crypto()
-    {}
-
-    void encrypt(const Buffer& in, Buffer& out)
     {
-    	encrypt(in.data, in.filled, out.data);
+        char* key = new char[CryptoPP::AES::DEFAULT_KEYLENGTH];
+        char* iv = new char[CryptoPP::AES::BLOCKSIZE];
+        std::memset(key, 0x01, 16);
+        std::memset(iv, 0x01, 16);
+        setEncKeyWithIv(key, 16, iv, 16);
+        setDecKeyWithIv(key, 16, iv, 16);
     }
-
-    void encrypt(const char* in, std::size_t len, Buffer& out)
-    {
-    	encrypt(in, len, out.data);
-    }
+#endif
 
     void encrypt(const char* in, std::size_t len, char* out)
     {
-    	encor.ProcessData(reinterpret_cast<byte*>(out),
-			reinterpret_cast<byte*>(in), len);
+        encrypt(reinterpret_cast<const uint8_t*>(in), len, out);
     }
 
-    void decrypt(const Buffer& in, Buffer& out)
+    void encrypt(const uint8_t* in, std::size_t len, char* out)
     {
-    	decrypt(in.data, in.filled, out.data);
-    }
-
-    void decrypt(const char* in, std::size_t len, Buffer& out)
-    {
-    	decrypt(in, len, out.data);
+        encor.ProcessData(reinterpret_cast<byte*>(out), in, len);
     }
 
     void decrypt(const char* in, std::size_t len, char* out)
     {
-    	decor.ProcessData(reinterpret_cast<byte*>(out),
-			reinterpret_cast<byte*>(in), len);
+        decrypt(in, len, reinterpret_cast<byte*>(out));
+    }
+
+    void decrypt(const char* in, std::size_t len, uint8_t* out)
+    {
+        decor.ProcessData(out, reinterpret_cast<const byte*>(in), len);
     }
 
     void setEncKeyWithIv(const char* _key, std::size_t keyLen, const char* _iv, std::size_t ivLen)
     {
     	encor.SetKeyWithIV(reinterpret_cast<const byte*>(_key), keyLen,
-    			reinterpret_cast<const byte*>(_iv), ivLen);
+            reinterpret_cast<const byte*>(_iv), ivLen);
     }
 
     void setDecKeyWithIv(const char* _key, std::size_t keyLen, const char* _iv, std::size_t ivLen)
     {
     	decor.SetKeyWithIV(reinterpret_cast<const byte*>(_key), keyLen,
-    			reinterpret_cast<const byte*>(_iv), ivLen);
+            reinterpret_cast<const byte*>(_iv), ivLen);
     }
 };
 

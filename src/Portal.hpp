@@ -5,7 +5,7 @@
 #include <boost/system/error_code.hpp>
 #include <boost/asio.hpp>
 #include "Config.hpp"
-#include "Channel.hpp"
+#include "Bus.hpp"
 
 using boost::asio::ip::tcp;
 
@@ -15,29 +15,18 @@ namespace csocks
 class Portal
 {
 private:
-    const Config& config;
-
-    boost::asio::io_service ioService;
-    tcp::acceptor acceptor;
-    tcp::resolver resolver;
+    const Config* const config;
+    Bus bus;
 
 public:
-    Portal(const Config& _config):
-        config(_config),
-        ioService(config.ioServiceNum),
-        acceptor(ioService, tcp::endpoint(config.host, config.port)),
-        resolver(ioService)
+    Portal(const Config* _config):
+        config(_config), bus(config)
     {}
 
     void run()
     {
-        accept();
+        bus.start();
     }
-
-private:
-    void accept();
-
-    void handle_accept(Channel* chan, const boost::system::error_code& err);
 };
 
 }
