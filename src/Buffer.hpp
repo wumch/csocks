@@ -12,14 +12,13 @@ class Buffer
 public:
     char* data;
     std::size_t capacity;
-    std::size_t filled;
 
     Buffer():
-        data(NULL), capacity(0), filled(0)
+        data(NULL), capacity(0)
     {}
 
     Buffer(std::size_t _size):
-        data(NULL), capacity(_size), filled(0)
+        data(NULL), capacity(_size)
     {
         setCapacity(capacity);
     }

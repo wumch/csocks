@@ -29,5 +29,5 @@ add_executable(csocks ${SOURCE_FILES}
 link_directories(/usr/lib/x86_64-linux-gnu)
 target_link_libraries(csocks 
     libboost_system.so libboost_filesystem.so 
-    libssl.so libcrypto.so libcryptopp.so
+    libssl.so libcrypto.so libcrypto++.so
 )

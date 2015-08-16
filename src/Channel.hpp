@@ -23,7 +23,7 @@ using asio::ip::udp;
 
 #define SINGLE_BYTE __attribute__((aligned(1), packed))
 
-#define KICK_IF(err) if (CS_UNLIKELY(err)) { delete this; return; }
+#define KICK_IF(err) if (CS_UNLIKELY(err)) { return; }
 
 namespace csocks
 {
@@ -32,6 +32,11 @@ class Channel:
     public boost::enable_shared_from_this<Channel>
 {
 private:
+    enum {
+        PROTOCOL_V4 = 0x04,
+        PROTOCOL_V5 = 0x05,
+        PROTOCOL_VERSION = PROTOCOL_V5,
+    };
     enum {
         CMD_CONNECT     = 0x01,
         CMD_BIND        = 0x02,
@@ -130,6 +135,7 @@ public:
 
     ~Channel()
     {
+        CS_SAY("channel [" << (std::size_t)this << "] destructing");
         shutdown();
     }
 
@@ -291,13 +297,13 @@ private:
         CS_DUMP(username);
         CS_DUMP(password);
 
-//        authenticater.auth(username, usernameLen, password, bytesRead,
-//            boost::bind(&Channel::handleAuthed, shared_from_this(), username, usernameLen));
-        authenticater.auth(username, usernameLen, password, bytesRead);
+        authenticater.auth(username, usernameLen, password, bytesRead,
+            boost::bind(&Channel::handleAuthed, shared_from_this(), _1, _2, username, usernameLen));
+//        authenticater.auth(username, usernameLen, password, bytesRead);
     }
 
-    void handleAuthed(const char* username, std::size_t usernameLen,
-            int code, Authority* _authority)
+    void handleAuthed(int code, Authority* _authority,
+        const char* username, std::size_t usernameLen)
     {
         if (CS_BLIKELY(code == Authenticater::CODE_OK))
         {
@@ -559,12 +565,10 @@ private:
     {
         KICK_IF(err)
 
-        bufdr.filled = 0;
         ds.async_read_some(asio::buffer(bufdr.data, bufdr.capacity),
             boost::bind(&Channel::handleDsRead, shared_from_this(),
                 asio::placeholders::error, asio::placeholders::bytes_transferred));
 
-        bufur.filled = 0;
         us.async_read_some(asio::buffer(bufur.data, bufur.capacity),
             boost::bind(&Channel::handleUsRead, shared_from_this(),
                 asio::placeholders::error, asio::placeholders::bytes_transferred));
