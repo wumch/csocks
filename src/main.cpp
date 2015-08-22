@@ -4,8 +4,8 @@
 
 int main(int argc, char* argv[])
 {
-    const csocks::Config* config = csocks::Config::instance();
-    csocks::Portal portal(config);
+    csocks::Config::mutableInstance()->init(argc, argv);
+    csocks::Portal portal;
     portal.run();
     return 0;
 }

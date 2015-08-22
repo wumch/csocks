@@ -42,6 +42,7 @@ public:
 
     void encrypt(const uint8_t* in, std::size_t len, uint8_t* out)
     {
+        std::memcpy(out, in, len);
         return;
         encor.ProcessData(out, in, len);
     }
@@ -58,6 +59,7 @@ public:
 
     void decrypt(const uint8_t* in, std::size_t len, uint8_t* out)
     {
+        std::memcpy(out, in, len);
         return;
         decor.ProcessData(out, in, len);
     }

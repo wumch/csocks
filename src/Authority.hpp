@@ -24,6 +24,8 @@ public:
     traf_t traffic_future;       // 下一阶段的剩余流量
     std::time_t traffic_expires_future; // 下一阶段流量过期时间
 
+    std::size_t drBufSize, dwBufSize, urBufSize, uwBufSize;
+
     bool traffic_expired(std::time_t point) const
     {
         return traffic_expires <= point;

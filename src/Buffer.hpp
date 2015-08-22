@@ -27,7 +27,7 @@ public:
     {
         if (data != NULL)
         {
-            throw std::bad_alloc();
+            delete data;
         }
         capacity = _capacity;
         data = new char[capacity];

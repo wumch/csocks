@@ -19,22 +19,6 @@ private:
     CryptoPP::CFB_Mode<CryptoPP::AES>::Decryption decor;
 
 public:
-#if CS_DEBUG        // avoid from destructing encor/decor with empty key/iv.
-    Crypto()
-//:
-//        encor(key, CryptoPP::AES::DEFAULT_KEYLENGTH, iv, CryptoPP::AES::BLOCKSIZE),
-//        decor(key, CryptoPP::AES::DEFAULT_KEYLENGTH, iv, CryptoPP::AES::BLOCKSIZE)
-    {
-//        byte* key = new byte[CryptoPP::AES::DEFAULT_KEYLENGTH];
-//        byte* iv = new byte[CryptoPP::AES::BLOCKSIZE];
-//        std::memset(key, 0x01, 16);
-//        std::memset(iv, 0x01, 16);
-        byte key[CryptoPP::AES::DEFAULT_KEYLENGTH] = {0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01};
-        byte iv[CryptoPP::AES::BLOCKSIZE] = {0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01};
-        setEncKeyWithIv(key, 16, iv, 16);
-        setDecKeyWithIv(key, 16, iv, 16);
-    }
-#endif
 
     void encrypt(const char* in, std::size_t len, char* out)
     {
@@ -48,6 +32,7 @@ public:
 
     void encrypt(const uint8_t* in, std::size_t len, byte* out)
     {
+        return;
         encor.ProcessData(out, in, len);
     }
 
@@ -63,7 +48,8 @@ public:
 
     void decrypt(const byte* in, std::size_t len, uint8_t* out)
     {
-        decor.ProcessData(out, reinterpret_cast<const byte*>(in), len);
+        return;
+        decor.ProcessData(out, in, len);
     }
 
     void setEncKeyWithIv(const byte* _key, std::size_t keyLen,

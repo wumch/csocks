@@ -26,8 +26,8 @@ private:
     Authenticater authenticater;
 
 public:
-    Bus(const Config* _config):
-        config(_config),
+    Bus():
+        config(Config::instance()),
         ioService(config->ioServiceNum),
         acceptor(ioService, tcp::endpoint(config->host, config->port))
     {}
@@ -48,6 +48,7 @@ private:
 
     void handleAccept(const boost::system::error_code& err, boost::shared_ptr<Channel>& channel)
     {
+        CS_SAY("recevied");
         if (CS_BLIKELY(!err))
         {
             channel->start();
